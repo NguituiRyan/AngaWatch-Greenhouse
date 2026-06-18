@@ -1,0 +1,13 @@
+# Only the web/ dashboard is built on Vercel; everything else is irrelevant there.
+backend/
+simulator/
+gateway/
+firmware/
+infra/
+docs/
+.git/
+**/__pycache__/
+**/.venv/
+**/node_modules/
+*.db
+*.sqlite

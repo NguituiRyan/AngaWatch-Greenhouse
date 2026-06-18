@@ -9,6 +9,18 @@ acted on by closing the loop to a vent that opens itself. The moat is not the
 hardware; it is the calibrated agronomy: five risk models (late blight, *Tuta
 absoluta*, microclimate, nutrient, water) tuned for Kenyan highland tomato.
 
+## 🌐 Live demo
+
+**[angawatch-greenhouse.vercel.app](https://angawatch-greenhouse.vercel.app)** — the
+full dashboard hosted on Vercel in self-contained **demo mode** (baked-in
+late-blight scenario, no backend needed). Sign in with `admin@demo-coop.ke` /
+`password123` to see GH-1 raise a HIGH blight risk, the bilingual recommendation,
+the alert feed, telemetry charts, and manual vent control.
+
+> Demo mode (`VITE_DEMO_MODE=true`) serves captured fixtures through the api
+> layer. For live data, run the full stack locally (`docker compose up`) or point
+> `VITE_API_BASE_URL` at a hosted backend — see [DEMO.md](DEMO.md).
+
 ---
 
 ## The 4-layer architecture

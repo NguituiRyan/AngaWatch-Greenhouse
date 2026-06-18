@@ -46,3 +46,5 @@ Thumbs.db
 infra/postgres/data/
 gateway/*.sqlite
 *.log
+
+.vercel
