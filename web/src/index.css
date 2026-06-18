@@ -1,0 +1,56 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Default AngaWatch brand (emerald). White-label orgs override --brand at
+     runtime via ThemeProvider. Stored as space-separated RGB for Tailwind's
+     `rgb(var(--brand) / <alpha>)` colour syntax. */
+  --brand: 22 163 74; /* emerald-600 */
+  --brand-fg: 255 255 255;
+
+  color-scheme: light;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: "Inter", system-ui, "Segoe UI", Roboto, sans-serif;
+  background-color: #f8fafc; /* slate-50 */
+  color: #0f172a; /* slate-900 */
+  -webkit-font-smoothing: antialiased;
+}
+
+@layer components {
+  .card {
+    @apply rounded-xl border border-slate-200 bg-white shadow-sm;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium
+      transition-colors focus:outline-none focus:ring-2 focus:ring-brand/40 disabled:cursor-not-allowed
+      disabled:opacity-50;
+  }
+
+  .btn-primary {
+    @apply btn bg-brand text-brand-fg hover:opacity-90;
+  }
+
+  .btn-secondary {
+    @apply btn border border-slate-300 bg-white text-slate-700 hover:bg-slate-50;
+  }
+
+  .input {
+    @apply w-full rounded-lg border border-slate-300 px-3 py-2 text-sm shadow-sm
+      focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand;
+  }
+
+  .label {
+    @apply mb-1 block text-sm font-medium text-slate-700;
+  }
+}

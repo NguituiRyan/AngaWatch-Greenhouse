@@ -1,0 +1,41 @@
+[project]
+name = "angawatch-gateway"
+version = "0.1.0"
+description = "AngaWatch edge gateway — MQTT store-and-forward bridge (offline-first) from the on-farm broker to the cloud broker."
+requires-python = ">=3.12"
+readme = "README.md"
+dependencies = [
+    "paho-mqtt>=2.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2",
+    "ruff>=0.4",
+    "black>=24.4",
+]
+
+[project.scripts]
+angawatch-gateway = "gateway.run:main"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["gateway*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["gateway"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "C4", "SIM", "TCH"]
+
+[tool.black]
+line-length = 100
+target-version = ["py312"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
