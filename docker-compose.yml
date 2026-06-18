@@ -1,0 +1,163 @@
+# AngaWatch Greenhouse — full local stack.
+#   docker compose up -d            # infra + backend + workers + ingestion + web
+#   docker compose --profile sim up # also run the device simulator
+# Requires Docker Desktop. See README.md and DEMO.md.
+
+name: angawatch
+
+x-backend-env: &backend-env
+  env_file: .env
+  environment:
+    POSTGRES_HOST: postgres
+    REDIS_URL: redis://redis:6379/0
+    CELERY_BROKER_URL: redis://redis:6379/1
+    CELERY_RESULT_BACKEND: redis://redis:6379/2
+    MQTT_HOST: mosquitto
+    DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-angawatch}:${POSTGRES_PASSWORD:-angawatch}@postgres:5432/${POSTGRES_DB:-angawatch}
+    DATABASE_URL_SYNC: postgresql+psycopg://${POSTGRES_USER:-angawatch}:${POSTGRES_PASSWORD:-angawatch}@postgres:5432/${POSTGRES_DB:-angawatch}
+
+services:
+  postgres:
+    image: timescale/timescaledb:latest-pg16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-angawatch}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-angawatch}
+      POSTGRES_DB: ${POSTGRES_DB:-angawatch}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-angawatch} -d ${POSTGRES_DB:-angawatch}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - ./infra/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_sub -t '$$SYS/#' -C 1 -i healthcheck -W 3 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    <<: *backend-env
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    <<: *backend-env
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  ingestion:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    <<: *backend-env
+    command: ["python", "-m", "app.ingestion.consumer"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - ./backend:/app
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    <<: *backend-env
+    command: ["celery", "-A", "app.workers.celery_app.celery_app", "worker", "--loglevel=INFO", "--concurrency=2"]
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - ./backend:/app
+
+  beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    <<: *backend-env
+    command: ["celery", "-A", "app.workers.celery_app.celery_app", "beat", "--loglevel=INFO"]
+    depends_on:
+      redis:
+        condition: service_healthy
+      worker:
+        condition: service_started
+    volumes:
+      - ./backend:/app
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    environment:
+      VITE_API_BASE_URL: http://localhost:8000
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./web:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+
+  simulator:
+    build:
+      context: ./simulator
+      dockerfile: Dockerfile
+    env_file: .env
+    environment:
+      MQTT_HOST: mosquitto
+    command: ["python", "-m", "simulator.run"]
+    profiles: ["sim"]
+    depends_on:
+      mosquitto:
+        condition: service_started
+
+volumes:
+  pgdata:
