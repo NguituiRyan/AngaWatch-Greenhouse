@@ -3,5 +3,6 @@
   "framework": "vite",
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
+  "build": { "env": { "VITE_DEMO_MODE": "true" } },
   "rewrites": [{ "source": "/((?!assets/).*)", "destination": "/index.html" }]
 }

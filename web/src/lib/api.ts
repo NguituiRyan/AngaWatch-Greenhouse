@@ -9,6 +9,8 @@
  * - `login()` uses the OAuth2 password *form* flow (username = email).
  */
 
+import { DEMO_MODE, demoRequest } from "@/lib/demo";
+
 const RAW_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 export const API_BASE = `${RAW_BASE.replace(/\/+$/, "")}/api/v1`;
 
@@ -76,6 +78,11 @@ async function parseError(res: Response): Promise<ApiError> {
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const { method = "GET", body, formBody, query, anonymous, signal } = options;
+
+  // Demo mode (production builds): serve baked-in fixtures, no network.
+  if (DEMO_MODE) {
+    return demoRequest<T>(formBody ? "POST" : method, path, body);
+  }
 
   const headers: Record<string, string> = {};
   if (!anonymous) {
