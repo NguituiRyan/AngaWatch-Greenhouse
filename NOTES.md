@@ -2,8 +2,10 @@
 
 This is the honest, per-module status of the platform: what is fully implemented,
 what is a deliberate scaffold, and where the agronomy is a calibratable placeholder
-awaiting field data. It complements [`README.md`](README.md) (the pitch + setup)
-and [`docs/CONTRACT.md`](docs/CONTRACT.md) (the seam spec).
+awaiting field data. It complements [`README.md`](README.md) (the pitch + setup),
+[`docs/CONTRACT.md`](docs/CONTRACT.md) (the seam spec), and
+[`docs/hardware-integration.md`](docs/hardware-integration.md) (wiring the
+dashboard to a real/emulated ESP node over the MQTT control loop).
 
 ---
 
@@ -64,7 +66,9 @@ deferred; **Scaffold** = data model and/or a safe no-op in place, logic TODO;
 | `service.enqueue_command` | Done | Async; persists `QUEUED` `ControlCommand`. |
 | `service.execute_command` | Done | Resolves driver, enforces interlocks (`min_cycle_interval_s`), applies, sets `ACKED`/`SENT`/`FAILED`, updates actuator state. |
 | `drivers/mock.py` | Done | Always registered; acks immediately and flips `ActuatorDevice.state`. |
-| `drivers/mqtt_relay.py` | Partial | Publishes a command to MQTT; degrades to a non-acked `SENT` result when no broker — real relay round-trip/ack untested. |
+| `drivers/mqtt_relay.py` | Done | Publishes the `{command_id, actuator_uid, command, ...}` command JSON to `farm/{org_id}/{node_uid}/command` (QoS 1); fire-and-forget (`acked=False`), and **fail-soft** — a broker/publish failure returns `ok=False` instead of raising so the service layer degrades to the `mock` driver and the stack runs offline. |
+| `ingest.handle_state_message` | Done | Consumes the device's `farm/{org_id}/{node_uid}/state` ack `{command_id, actuator_uid, state, ok}`; confirms `ActuatorDevice.state`, marks online, flips the correlated `ControlCommand` to `ACKED`/`FAILED`. Idempotent + defensive (unknown actuator / bad payload logged + skipped). Driven by the ingestion consumer (`farm/+/+/state` subscription). |
+| **Hardware control loop (ESP ↔ dashboard)** | Done (Wave 0/1) | The full MQTT closed loop is **live-verified over a real broker**: telemetry up + command down + device state ack up. Pieces: `mqtt_relay` driver (command down) + `control.ingest.handle_state_message` (ack up) + WiFi firmware (`firmware/`, env `esp32-wifi`) + no-hardware emulator (`scripts/esp_emulator.py`) + Dockerless dev broker (`scripts/dev_broker.py`) + loop verifier (`scripts/verify_loop.py`, PASS). Run it with [`docs/hardware-integration.md`](docs/hardware-integration.md). |
 | `automation.evaluate_rules` | Scaffold | Wave 1. Loads enabled rules, checks `{metric,op,value}` against the latest reading, respects basic interlocks, enqueues `AUTO` commands. **Safe no-op when no rules are enabled.** TODOs: `duration_min` sustained windows, hysteresis, auto-close timers, forecast-fused triggers, in-flight de-dup. |
 
 ### Weather
