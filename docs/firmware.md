@@ -4,10 +4,18 @@
 > wiring tables, build/flash commands, OTA, and per-probe calibration — lives in
 > **[`../firmware/README.md`](../firmware/README.md)**.
 
-The **Sense** layer of AngaWatch is a battery + solar **ESP32 + LoRa sensor node**,
-authored in PlatformIO under `firmware/`. It is written for clarity and is **not
-compiled in CI**; pin maps and calibration constants are sane placeholders to
-verify against your exact hardware before flashing.
+The **Sense** layer of AngaWatch is an **ESP32 sensor node** authored in PlatformIO
+under `firmware/`, with **two backhauls** you pick per deployment:
+
+- **`esp32dev`** — battery + solar **LoRa** node (SX1276/RFM95, 868 MHz) that deep-sleeps
+  and forwards to a field gateway. Long range, ultra-low power, telemetry-only.
+- **`esp32-wifi`** — a mains/solar-buffered **WiFi + MQTT** node (`src/main_wifi.cpp`,
+  PubSubClient) that talks **directly to the broker**, stays awake, and **closes the
+  control loop**: it subscribes to commands and drives the vent relay, publishing a
+  state ack the dashboard confirms. See **[`hardware-integration.md`](hardware-integration.md)**.
+
+It is written for clarity and is **not compiled in CI**; pin maps and calibration
+constants are sane placeholders to verify against your exact hardware before flashing.
 
 ---
 
@@ -28,7 +36,9 @@ A node runs an RTC deep-sleep duty cycle (~15 min):
 
 The gateway validates and republishes each packet to MQTT
 `farm/{org_id}/{device_uid}/telemetry`, where the backend ingestion consumer
-persists it.
+persists it. The **`esp32-wifi`** node skips the gateway — it publishes straight to
+that topic, and additionally subscribes to `.../command` and publishes `.../state`
+to close the actuator control loop with the dashboard.
 
 ---
 
@@ -56,12 +66,14 @@ only re-implements the **instant** rules for offline alerting. See
 
 ```
 firmware/
-├── platformio.ini        # env esp32dev, libs, deep-sleep build flags
+├── platformio.ini        # envs: esp32dev (LoRa) + esp32-wifi (WiFi/MQTT)
 ├── include/
-│   ├── config.h          # pins, LoRa params, identity, deep-sleep interval
+│   ├── config.h          # pins (incl. PIN_VENT_RELAY), LoRa/MQTT params, identity
+│   ├── secrets.h.example  # copy -> secrets.h: WiFi + MQTT + ORG_ID + uids (gitignored)
 │   └── thresholds.h      # instant microclimate thresholds (mirror backend)
 └── src/
-    ├── main.cpp          # read → threshold → JSON → TX → sleep
+    ├── main.cpp          # LoRa node: read → threshold → JSON → TX → sleep
+    ├── main_wifi.cpp     # WiFi node: telemetry up + command down + relay + state ack
     ├── sensors.h/.cpp    # sensor drivers
     └── lora.h/.cpp       # SX1276/RFM95 init + send
 ```
@@ -69,13 +81,16 @@ firmware/
 Build / flash / monitor (from `firmware/`):
 
 ```bash
-pio run -e esp32dev
-pio run -e esp32dev -t upload
+pio run -e esp32dev        -t upload   # LoRa node
+pio run -e esp32-wifi      -t upload   # WiFi+MQTT node (closes the dashboard loop)
 pio device monitor -b 115200
 ```
 
-**OTA** is stubbed and disabled by default (standard nodes are LoRa-only with no IP
-backhaul); a WiFi-equipped node can enable `OTA_ENABLED` and use the
-`esp32dev_ota` env. Per-probe **calibration** (soil moisture, leaf wetness, PPFD,
-battery divider, NPK register map) is documented in detail in the firmware README —
-measure each probe, do not trust the placeholders.
+> The WiFi node needs `include/secrets.h` (copy from `secrets.h.example`) with your
+> WiFi + broker + the **Organization UUID** (not the slug) and matching `DEVICE_UID`.
+> Build with `-DSIMULATE_SENSORS` to run with no sensors wired.
+
+**OTA** is available on the WiFi node (`esp32-wifi_ota`); LoRa-only nodes have no IP
+backhaul. Per-probe **calibration** (soil moisture, leaf wetness, PPFD, battery
+divider, NPK register map) is documented in the firmware README — measure each
+probe, do not trust the placeholders.
