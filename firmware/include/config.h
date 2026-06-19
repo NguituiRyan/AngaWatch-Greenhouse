@@ -13,17 +13,44 @@
 #include <Arduino.h>
 
 // ----------------------------------------------------------------------------
+// Per-deployment SECRETS (WiFi+MQTT node). Copy include/secrets.h.example to
+// include/secrets.h (gitignored) and fill in WiFi/MQTT credentials + identity.
+// secrets.h is included FIRST so its #defines win over the demo defaults below
+// (every default here is wrapped in #ifndef). The LoRa-only node does not need
+// secrets.h — if the file is absent the demo defaults are used.
+// ----------------------------------------------------------------------------
+#if defined(__has_include)
+#  if __has_include("secrets.h")
+#    include "secrets.h"
+#  endif
+#endif
+
+// ----------------------------------------------------------------------------
 // Node identity. These map directly onto the backend telemetry contract:
 //   MQTT topic = farm/{ORG_ID}/{DEVICE_UID}/telemetry
 //   TelemetryIn.device_id == DEVICE_UID
-// The gateway reads ORG_ID + DEVICE_UID out of the LoRa JSON to build the topic,
-// so they MUST match the seeded Device.device_uid / Organization in the backend.
-// Demo defaults mirror app/seed/constants.py (org "demo-coop", device GH1-NODE-01).
+// The WiFi node publishes directly to this topic; the LoRa node embeds ORG_ID +
+// DEVICE_UID in its JSON and the gateway builds the topic. They MUST match the
+// seeded Device.device_uid / Organization in the backend.
+//
+// IMPORTANT: the backend ingestion consumer parses {ORG_ID} from the topic as a
+// UUID (app/ingestion/consumer.py -> uuid.UUID(org_id_raw)). For the WiFi node
+// talking DIRECTLY to the broker, ORG_ID MUST be the Organization's UUID, not
+// the "demo-coop" slug. Set it in secrets.h. The slug default below only suits
+// the LoRa path where the gateway resolves the slug -> UUID before publishing.
 // ----------------------------------------------------------------------------
+#ifndef DEVICE_UID
 #define DEVICE_UID   "GH1-NODE-01"   // unique node id; == Device.device_uid
-#define ORG_ID       "demo-coop"     // owning organization slug/id
+#endif
+#ifndef ORG_ID
+#define ORG_ID       "demo-coop"     // owning org (slug for LoRa; UUID for WiFi)
+#endif
+#ifndef GREENHOUSE
 #define GREENHOUSE   "GH-1"          // human label, informational only
+#endif
+#ifndef FW_VERSION
 #define FW_VERSION   "0.1.0"         // bumped on every OTA release
+#endif
 
 // ----------------------------------------------------------------------------
 // Deep-sleep cadence. The node spends almost all of its life asleep to stretch
@@ -109,16 +136,68 @@
 // instant threshold (see thresholds.h) is breached. This is the offline safety
 // net — a farmer hears/sees the alert even with no LoRa coverage.
 // ----------------------------------------------------------------------------
-#define PIN_ALERT_RELAY    13      // drives vent relay / buzzer; active HIGH
+#define PIN_ALERT_RELAY    13      // drives local buzzer / alert relay; active HIGH
+
+// ----------------------------------------------------------------------------
+// Cloud-commanded VENT relay (WiFi+MQTT node only — see src/main_wifi.cpp).
+// The dashboard issues open/close commands over MQTT; the firmware drives this
+// relay HIGH (open) / LOW (closed) and acks the new state back to the broker,
+// closing the control loop. The LoRa deep-sleep node does not use this pin (it
+// has no command backhaul); it only trips PIN_ALERT_RELAY for offline alerts.
+// Kept distinct from PIN_ALERT_RELAY so a buzzer and a vent motor can coexist.
+// ----------------------------------------------------------------------------
+#ifndef PIN_VENT_RELAY
+#define PIN_VENT_RELAY     12      // drives the vent actuator; HIGH=open, LOW=closed
+#endif
+
+// ----------------------------------------------------------------------------
+// WiFi + MQTT backhaul (src/main_wifi.cpp). The WiFi node talks DIRECTLY to the
+// broker — telemetry up, commands down, state ack up — and so closes the control
+// loop with the dashboard. Real credentials belong in include/secrets.h (NOT
+// committed); the empty defaults below only keep a LoRa-only build compiling.
+// ----------------------------------------------------------------------------
+#ifndef WIFI_SSID
+#define WIFI_SSID          ""       // set in secrets.h
+#endif
+#ifndef WIFI_PASSWORD
+#define WIFI_PASSWORD      ""       // set in secrets.h
+#endif
+
+#ifndef MQTT_HOST
+#define MQTT_HOST          "localhost"  // broker the dashboard/backend also use
+#endif
+#ifndef MQTT_PORT
+#define MQTT_PORT          1883
+#endif
+#ifndef MQTT_USER
+#define MQTT_USER          ""       // "" -> connect without auth
+#endif
+#ifndef MQTT_PASS
+#define MQTT_PASS          ""
+#endif
+
+// The vent actuator this node drives. Echoed back in the state/ack so the
+// backend can confirm the right ActuatorDevice. Mirrors app/seed/constants.py.
+#ifndef VENT_ACTUATOR_UID
+#define VENT_ACTUATOR_UID  "GH1-VENT-01"
+#endif
+
+// Telemetry cadence for the always-on WiFi node (seconds). Unlike the LoRa node
+// it does NOT deep-sleep (it must stay subscribed to receive commands), so this
+// is a wall-clock publish interval, not a sleep duration.
+#ifndef TELEMETRY_INTERVAL_S
+#define TELEMETRY_INTERVAL_S   10UL
+#endif
 
 // ----------------------------------------------------------------------------
 // OTA (optional, when the node has WiFi backhaul instead of LoRa-only).
 // Credentials are compile-time placeholders; prefer ArduinoOTA password / signed
-// updates in production. Hooks live in src/main.cpp.
+// updates in production. Hooks live in src/main.cpp (LoRa) and src/main_wifi.cpp
+// (WiFi). The WiFi node is already on the network, so OTA stays available there.
 // ----------------------------------------------------------------------------
+#ifndef OTA_ENABLED
 #define OTA_ENABLED        0        // 0 = LoRa-only node; 1 = WiFi+OTA node
+#endif
 #define OTA_HOSTNAME       "angawatch-" DEVICE_UID
-#define WIFI_SSID          ""       // set when OTA_ENABLED
-#define WIFI_PASSWORD      ""
 
 #endif  // ANGAWATCH_CONFIG_H
