@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
+import { LIVE_REFETCH_MS } from "@/lib/live";
 import type { RiskAssessment } from "@/lib/types";
 
 /** Latest assessment per model type for a greenhouse. */
@@ -10,7 +11,7 @@ export function useRisk(greenhouseId: string | undefined) {
   return useQuery({
     queryKey: ["risk", greenhouseId],
     enabled: Boolean(greenhouseId),
-    refetchInterval: 60_000,
+    refetchInterval: LIVE_REFETCH_MS,
     queryFn: () => api.get<RiskAssessment[]>(`/greenhouses/${greenhouseId}/risk`),
   });
 }

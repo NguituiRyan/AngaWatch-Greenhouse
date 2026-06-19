@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { api, ApiError } from "@/lib/api";
+import { LIVE_REFETCH_MS } from "@/lib/live";
 import type { Reading, ReadingMetric } from "@/lib/types";
 
 /** Most recent reading for a greenhouse. 404 (no readings yet) -> null. */
@@ -10,7 +11,7 @@ export function useLatestReading(greenhouseId: string | undefined) {
   return useQuery({
     queryKey: ["readings", greenhouseId, "latest"],
     enabled: Boolean(greenhouseId),
-    refetchInterval: 30_000,
+    refetchInterval: LIVE_REFETCH_MS,
     queryFn: async () => {
       try {
         return await api.get<Reading>(`/greenhouses/${greenhouseId}/readings/latest`);

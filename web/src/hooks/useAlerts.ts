@@ -3,12 +3,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
+import { LIVE_REFETCH_MS } from "@/lib/live";
 import type { Alert, AlertStatus } from "@/lib/types";
 
 export function useAlerts(status?: AlertStatus, limit = 100) {
   return useQuery({
     queryKey: ["alerts", { status: status ?? null, limit }],
-    refetchInterval: 60_000,
+    refetchInterval: LIVE_REFETCH_MS,
     queryFn: () =>
       api.get<Alert[]>("/alerts", {
         query: { status, limit },

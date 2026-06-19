@@ -3,12 +3,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
+import { LIVE_REFETCH_MS } from "@/lib/live";
 import type { Actuator, CommandIn, ControlCommand } from "@/lib/types";
 
 export function useActuators(greenhouseId: string | undefined) {
   return useQuery({
     queryKey: ["actuators", greenhouseId],
     enabled: Boolean(greenhouseId),
+    // Poll so a device's confirmed relay state (via its MQTT ack) shows up live.
+    refetchInterval: LIVE_REFETCH_MS,
     queryFn: () => api.get<Actuator[]>(`/greenhouses/${greenhouseId}/actuators`),
   });
 }
@@ -16,6 +19,7 @@ export function useActuators(greenhouseId: string | undefined) {
 export function useCommands(limit = 100) {
   return useQuery({
     queryKey: ["control", "commands", { limit }],
+    refetchInterval: LIVE_REFETCH_MS,
     queryFn: () => api.get<ControlCommand[]>("/control/commands", { query: { limit } }),
   });
 }
