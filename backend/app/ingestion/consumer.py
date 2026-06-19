@@ -26,6 +26,7 @@ import paho.mqtt.client as mqtt
 from paho.mqtt.enums import CallbackAPIVersion
 from pydantic import ValidationError
 
+from app.control.ingest import handle_state_message
 from app.core.config import settings
 from app.core.logging import configure_logging, get_logger
 from app.db.session import get_sync_session
@@ -39,6 +40,22 @@ logger = get_logger(__name__)
 
 _TOPIC_PREFIX = "farm"
 _TOPIC_SUFFIX = "telemetry"
+_STATE_SUFFIX = "state"
+
+
+def parse_state_topic(topic: str) -> tuple[uuid.UUID, str] | None:
+    """Parse ``farm/{org_id}/{device_uid}/state`` → ``(org_id, device_uid)``."""
+    parts = topic.split("/")
+    if len(parts) != 4 or parts[0] != _TOPIC_PREFIX or parts[3] != _STATE_SUFFIX:
+        return None
+    org_id_raw, device_uid = parts[1], parts[2]
+    if not device_uid:
+        return None
+    try:
+        org_id = uuid.UUID(org_id_raw)
+    except (ValueError, AttributeError):
+        return None
+    return org_id, device_uid
 
 
 def parse_topic(topic: str) -> tuple[uuid.UUID, str] | None:
@@ -71,9 +88,15 @@ def _on_connect(
     if reason_code.is_failure:
         logger.error("mqtt.connect_failed", reason=str(reason_code))
         return
-    topic = settings.mqtt_telemetry_topic
-    client.subscribe(topic)
-    logger.info("mqtt.connected", host=settings.mqtt_host, port=settings.mqtt_port, topic=topic)
+    client.subscribe(settings.mqtt_telemetry_topic)
+    client.subscribe(settings.mqtt_state_topic)
+    logger.info(
+        "mqtt.connected",
+        host=settings.mqtt_host,
+        port=settings.mqtt_port,
+        telemetry=settings.mqtt_telemetry_topic,
+        state=settings.mqtt_state_topic,
+    )
 
 
 def _on_disconnect(
@@ -91,6 +114,39 @@ def _on_disconnect(
 
 
 def _on_message(client: mqtt.Client, userdata: object, msg: mqtt.MQTTMessage) -> None:
+    """Dispatch by topic suffix: ``/state`` -> control ack; else telemetry."""
+    if msg.topic.endswith(f"/{_STATE_SUFFIX}"):
+        _handle_state(msg)
+    else:
+        _handle_telemetry(msg)
+
+
+def _handle_state(msg: mqtt.MQTTMessage) -> None:
+    """Apply a device actuator state/ack message. Never raises."""
+    parsed = parse_state_topic(msg.topic)
+    if parsed is None:
+        logger.warning("mqtt.bad_topic", topic=msg.topic)
+        return
+    org_id, device_uid = parsed
+    try:
+        payload = json.loads(msg.payload)
+    except (ValueError, TypeError) as exc:
+        logger.warning("mqtt.bad_json", topic=msg.topic, error=str(exc))
+        return
+    if not isinstance(payload, dict):
+        logger.warning("mqtt.bad_payload", topic=msg.topic)
+        return
+    session = get_sync_session()
+    try:
+        handle_state_message(session, org_id=org_id, device_uid=device_uid, payload=payload)
+    except Exception:  # pragma: no cover - defensive; keep the loop alive
+        logger.exception("mqtt.state_error", topic=msg.topic, device_uid=device_uid)
+        session.rollback()
+    finally:
+        session.close()
+
+
+def _handle_telemetry(msg: mqtt.MQTTMessage) -> None:
     """Validate one telemetry message and persist it. Never raises."""
     parsed = parse_topic(msg.topic)
     if parsed is None:

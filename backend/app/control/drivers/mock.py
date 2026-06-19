@@ -36,6 +36,9 @@ class MockActuatorDriver(ActuatorDriver):
         target_uid: str,
         command: str,
         params: dict | None = None,
+        org_id: str | None = None,
+        node_uid: str | None = None,
+        command_id: str | None = None,
     ) -> CommandResult:
         verb = command.strip().lower()
         new_state = _COMMAND_TO_STATE.get(verb)

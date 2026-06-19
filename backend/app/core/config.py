@@ -43,7 +43,14 @@ class Settings(BaseSettings):
     mqtt_username: str | None = None
     mqtt_password: str | None = None
     mqtt_telemetry_topic: str = "farm/+/+/telemetry"
+    # Device-published actuator state/ack topic (closes the control loop).
+    mqtt_state_topic: str = "farm/+/+/state"
+    # Command topic the backend publishes to; {org_id}/{device_uid} = the node
+    # (relay-bearing device) that actuates. Consumed by the ESP firmware.
+    mqtt_command_topic_template: str = "farm/{org_id}/{device_uid}/command"
     mqtt_client_id: str = "angawatch-ingestion"
+    # Driver newly-seeded actuators use: "mock" (offline) or "mqtt" (real relays).
+    control_default_driver: str = "mock"
 
     # ---- Auth / security ----
     jwt_secret: str = "change-me"

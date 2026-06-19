@@ -36,7 +36,18 @@ class ActuatorDriver(ABC):
         target_uid: str,
         command: str,
         params: dict | None = None,
+        org_id: str | None = None,
+        node_uid: str | None = None,
+        command_id: str | None = None,
     ) -> CommandResult:
+        """Drive an actuator.
+
+        ``target_uid`` is the actuator's own uid (e.g. ``GH1-VENT-01``).
+        ``node_uid`` is the relay-bearing node that physically actuates it (used by
+        the MQTT driver to build the per-node command topic); ``org_id`` +
+        ``command_id`` route + correlate the command so a device ack can close the
+        loop. Drivers that don't need them ignore the extra kwargs.
+        """
         raise NotImplementedError
 
 

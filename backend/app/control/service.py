@@ -25,6 +25,7 @@ from app.control.base import ActuatorDriver, CommandResult, driver_registry
 from app.core.logging import get_logger
 from app.db.models.common import ActuatorState, CommandSource, CommandStatus
 from app.db.models.control import ActuatorDevice, ControlCommand
+from app.db.models.device import Device
 
 logger = get_logger(__name__)
 
@@ -61,6 +62,51 @@ def _driver_for(actuator: ActuatorDevice) -> ActuatorDriver:
     if driver is None:  # pragma: no cover - mock is always registered
         raise RuntimeError("no actuator driver available (mock missing)")
     return driver
+
+
+def _apply_with_fallback(
+    driver: ActuatorDriver,
+    *,
+    actuator: ActuatorDevice,
+    cmd: ControlCommand,
+    target_uid: str,
+    node_uid: str | None,
+) -> CommandResult:
+    """Apply a command via ``driver``, threading the routing context.
+
+    If a non-mock driver fails gracefully (e.g. the MQTT broker is unreachable),
+    fall back to the mock driver so the dashboard still reflects an optimistic
+    state — the stack stays usable with or without real hardware.
+    """
+    result = driver.apply(
+        actuator_type=actuator.actuator_type,
+        target_uid=target_uid,
+        command=cmd.command,
+        params=cmd.params or {},
+        org_id=str(actuator.org_id),
+        node_uid=node_uid,
+        command_id=str(cmd.id),
+    )
+    if result.ok or driver.name == DEFAULT_DRIVER_NAME:
+        return result
+
+    mock = driver_registry.get(DEFAULT_DRIVER_NAME)
+    if mock is None:  # pragma: no cover - mock is always registered
+        return result
+    logger.warning(
+        "control_command_driver_fallback",
+        command_id=str(cmd.id),
+        primary_driver=driver.name,
+        error=result.error,
+    )
+    fb = mock.apply(
+        actuator_type=actuator.actuator_type,
+        target_uid=target_uid,
+        command=cmd.command,
+        params=cmd.params or {},
+    )
+    fb.raw = {**(fb.raw or {}), "fell_back_from": driver.name, "primary_error": result.error}
+    return fb
 
 
 def _check_interlocks(actuator: ActuatorDevice, *, now: datetime) -> None:
@@ -177,15 +223,17 @@ async def execute_command(db: AsyncSession, command_id: uuid.UUID) -> ControlCom
         )
         return cmd
 
-    # ---- Apply via driver ----
+    # ---- Resolve the relay-bearing node uid (for MQTT command routing) ----
+    node_uid: str | None = None
+    if actuator.device_id is not None:
+        node_uid = await db.scalar(select(Device.device_uid).where(Device.id == actuator.device_id))
+
+    # ---- Apply via driver (mqtt -> mock fallback when the broker is down) ----
     driver = _driver_for(actuator)
     target_uid = actuator.name
     try:
-        result: CommandResult = driver.apply(
-            actuator_type=actuator.actuator_type,
-            target_uid=target_uid,
-            command=cmd.command,
-            params=cmd.params or {},
+        result: CommandResult = _apply_with_fallback(
+            driver, actuator=actuator, cmd=cmd, target_uid=target_uid, node_uid=node_uid
         )
     except Exception as exc:  # defensive: a driver must never crash the request
         cmd.status = CommandStatus.FAILED

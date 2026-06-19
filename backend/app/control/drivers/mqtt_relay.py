@@ -1,16 +1,21 @@
-"""MQTT relay actuator driver.
+"""MQTT relay actuator driver — the hardware control path.
 
-Publishes a command JSON to a per-actuator control topic. A real relay/GPIO node
-subscribes to that topic, flips the output, and (in a later wave) publishes an
-ack back. Wave 0 is fire-and-forget: we publish optimistically and report the
-state the command implies, tolerating broker absence so the stack still runs
-offline (a publish failure is surfaced as a non-acked ``CommandResult`` rather
-than an exception).
+Publishes a command JSON to the relay-bearing node's command topic
+``farm/{org_id}/{node_uid}/command`` (``settings.mqtt_command_topic_template``).
+The ESP firmware subscribes to that topic, flips the relay, and publishes an ack
+to ``farm/{org_id}/{node_uid}/state`` which the device-state consumer turns into
+a confirmed ``ActuatorDevice.state`` + an ``ACKED`` command — closing the loop on
+the dashboard.
 
-Control topic: ``farm/{org_id}/{target_uid}/control`` — but since the driver is
-stateless about org scoping, the caller passes the fully-resolved ``target_uid``
-and we publish to ``control/{target_uid}`` by default (configurable via
-``params["topic"]``).
+It is fire-and-forget at the driver layer: a successful publish reports the
+*implied* state with ``acked=False`` (the real ack arrives asynchronously over
+MQTT). It tolerates broker absence — a connect/publish failure returns
+``CommandResult(ok=False, ...)`` instead of raising, so the service layer can fall
+back to the mock driver and the stack still runs offline.
+
+Command payload (consumed by the firmware)::
+
+    {"command_id", "actuator_uid", "actuator_type", "command", "params", "ts"}
 """
 
 from __future__ import annotations
@@ -36,12 +41,7 @@ _COMMAND_TO_STATE: dict[str, str] = {
 
 
 class MqttRelayDriver(ActuatorDriver):
-    """Publishes a command JSON to a control topic via paho-mqtt.
-
-    Tolerates broker absence: if paho is unavailable or the connect/publish
-    fails, returns ``CommandResult(ok=False, acked=False, error=...)`` instead
-    of raising, so a caller can fall back to the mock driver.
-    """
+    """Publishes a command JSON to a node's command topic via paho-mqtt."""
 
     name = "mqtt"
 
@@ -50,18 +50,19 @@ class MqttRelayDriver(ActuatorDriver):
         *,
         host: str | None = None,
         port: int | None = None,
-        topic_prefix: str = "control",
-        connect_timeout_s: float = 2.0,
+        connect_timeout_s: float = 1.0,
     ) -> None:
         self.host = host or settings.mqtt_host
         self.port = port or settings.mqtt_port
-        self.topic_prefix = topic_prefix
         self.connect_timeout_s = connect_timeout_s
 
-    def _topic_for(self, target_uid: str, params: dict | None) -> str:
+    def _topic_for(self, *, org_id: str | None, node_uid: str, params: dict | None) -> str:
+        # An explicit override always wins (used by tests / special routing).
         if params and isinstance(params.get("topic"), str):
             return params["topic"]
-        return f"{self.topic_prefix}/{target_uid}"
+        return settings.mqtt_command_topic_template.format(
+            org_id=org_id or "+", device_uid=node_uid
+        )
 
     def apply(
         self,
@@ -70,13 +71,19 @@ class MqttRelayDriver(ActuatorDriver):
         target_uid: str,
         command: str,
         params: dict | None = None,
+        org_id: str | None = None,
+        node_uid: str | None = None,
+        command_id: str | None = None,
     ) -> CommandResult:
         verb = command.strip().lower()
         new_state = _COMMAND_TO_STATE.get(verb)
-        topic = self._topic_for(target_uid, params)
+        # Route to the relay-bearing node; fall back to the actuator's own uid.
+        route_uid = node_uid or target_uid
+        topic = self._topic_for(org_id=org_id, node_uid=route_uid, params=params)
         payload = json.dumps(
             {
-                "target_uid": target_uid,
+                "command_id": command_id,
+                "actuator_uid": target_uid,
                 "actuator_type": str(actuator_type),
                 "command": verb,
                 "params": params or {},
@@ -86,18 +93,21 @@ class MqttRelayDriver(ActuatorDriver):
 
         try:
             import paho.mqtt.client as mqtt  # local import: optional dependency
+            from paho.mqtt.enums import CallbackAPIVersion
         except Exception as exc:  # pragma: no cover - paho is a declared dep
             logger.warning("mqtt_driver_paho_unavailable", error=str(exc))
             return CommandResult(ok=False, acked=False, error=f"paho unavailable: {exc}")
 
-        client = mqtt.Client(client_id=f"{settings.mqtt_client_id}-control")
+        client = mqtt.Client(
+            callback_api_version=CallbackAPIVersion.VERSION2,
+            client_id=f"{settings.mqtt_client_id}-control",
+        )
         if settings.mqtt_username:
             client.username_pw_set(settings.mqtt_username, settings.mqtt_password or "")
 
         try:
-            client.connect(self.host, self.port, keepalive=int(self.connect_timeout_s) or 1)
+            client.connect(self.host, self.port, keepalive=max(1, int(self.connect_timeout_s)))
             info = client.publish(topic, payload, qos=1)
-            # Best-effort flush; do not block the request path for long.
             with contextlib.suppress(Exception):  # paho version differences
                 info.wait_for_publish(timeout=self.connect_timeout_s)
             client.disconnect()
@@ -116,16 +126,10 @@ class MqttRelayDriver(ActuatorDriver):
                 raw={"topic": topic, "payload": payload},
             )
 
-        logger.info(
-            "mqtt_driver_published",
-            host=self.host,
-            port=self.port,
-            topic=topic,
-            command=verb,
-        )
-        # Fire-and-forget: we published but have no device ack yet. Report the
-        # optimistic implied state; acked stays False until a real ack channel
-        # lands in a later wave.
+        logger.info("mqtt_driver_published", topic=topic, command=verb, command_id=command_id)
+        # Fire-and-forget: published, but the device ack arrives asynchronously
+        # over the state topic. Report the optimistic implied state; the consumer
+        # flips the command ACKED + confirms state when the ack lands.
         return CommandResult(
             ok=True,
             acked=False,

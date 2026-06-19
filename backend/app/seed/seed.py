@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 
+from app.core.config import settings
 from app.core.logging import get_logger
 from app.core.security import hash_password
 from app.db.models import (
@@ -324,7 +325,8 @@ def _create_vent(
         actuator_type=C.VENT_ACTUATOR_TYPE,
         state=ActuatorState.CLOSED,
         is_online=True,
-        config=dict(C.VENT_ACTUATOR_CONFIG),
+        # Driver from settings: "mock" (offline) or "mqtt" (real ESP relays).
+        config={**C.VENT_ACTUATOR_CONFIG, "driver": settings.control_default_driver},
     )
     session.add(vent)
     session.flush()
